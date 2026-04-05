@@ -1,0 +1,42 @@
+name: Secret Detection
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ""
+          head: HEAD
+          extra_args: --only-verified
+
+      - name: Pattern check for common secret formats
+        run: |
+          echo "Checking for hardcoded secrets..."
+          FOUND=0
+          # API keys, tokens, passwords in YAML/JSON
+          if grep -rn \
+            -e 'sk-[a-zA-Z0-9]\{20,\}' \
+            -e 'ghp_[a-zA-Z0-9]\{36\}' \
+            -e 'gho_[a-zA-Z0-9]\{36\}' \
+            -e 'password\s*[:=]\s*["\x27][^"\x27]\{8,\}' \
+            -e 'secret\s*[:=]\s*["\x27][^"\x27]\{8,\}' \
+            --include="*.yml" --include="*.yaml" --include="*.json" \
+            .; then
+            echo "::error::Potential secrets found in workflow files"
+            FOUND=1
+          fi
+          if [ "$FOUND" -eq 1 ]; then
+            exit 1
+          fi
+          echo "No hardcoded secrets found"
