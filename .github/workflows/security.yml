@@ -1,0 +1,158 @@
+# =============================================================================
+# Shared Security Workflow for ratwerk Next.js projects
+# Lives in: ratwerk/.github/.github/workflows/security.yml
+# Called by: g5check, g5check-admin, sales
+# =============================================================================
+
+name: Security Checks
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version'
+        default: '20'
+        type: string
+      demo-mode:
+        description: 'Set DEMO_MODE env var for build'
+        default: 'true'
+        type: string
+      run-e2e:
+        description: 'Run Playwright E2E tests'
+        default: true
+        type: boolean
+      e2e-command:
+        description: 'Command to run E2E tests'
+        default: 'npm run test:e2e'
+        type: string
+      lint-max-warnings:
+        description: 'Max ESLint warnings allowed (-1 = no limit)'
+        default: -1
+        type: number
+      skip-semgrep:
+        description: 'Skip Semgrep SAST scan'
+        default: false
+        type: boolean
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 1. Dependency Vulnerability Scan
+      - name: Block on critical vulnerabilities
+        run: npm audit --audit-level=critical
+
+      - name: Report high vulnerabilities
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      # 2. TypeScript Type Check
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      # 3. ESLint
+      - name: Lint check
+        run: |
+          if [ "${{ inputs.lint-max-warnings }}" -ge 0 ]; then
+            npm run lint -- --max-warnings ${{ inputs.lint-max-warnings }}
+          else
+            npm run lint
+          fi
+
+      # 4. Secret Detection
+      - name: Detect secrets in code
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ""
+          head: HEAD
+          extra_args: --only-verified
+
+      # 5. Build Test
+      - name: Build application
+        run: npm run build
+        env:
+          DEMO_MODE: ${{ inputs.demo-mode }}
+
+      # 6. Dangerous Patterns Check
+      - name: Check for console.log in app code
+        run: |
+          DIRS=$(find src -maxdepth 1 -type d \( -name app -o -name components -o -name hooks \) 2>/dev/null)
+          if [ -z "$DIRS" ]; then
+            echo "No app/components/hooks directories found — skipping"
+            exit 0
+          fi
+          if grep -rn "console\.log" --include="*.ts" --include="*.tsx" \
+            --exclude-dir=node_modules --exclude-dir=.next $DIRS; then
+            echo "::error::console.log found in app/components/hooks code"
+            exit 1
+          fi
+          echo "No console.log in app code"
+
+      - name: Check for dangerouslySetInnerHTML
+        run: |
+          if grep -rn "dangerouslySetInnerHTML" --include="*.ts" --include="*.tsx" \
+            --exclude-dir=node_modules --exclude-dir=.next src/; then
+            echo "::error::dangerouslySetInnerHTML found"
+            exit 1
+          fi
+          echo "No dangerouslySetInnerHTML found"
+
+      # 7. API Route Validation Check (warn only)
+      - name: Check API routes for validation
+        continue-on-error: true
+        run: |
+          API_DIR="src/app/api"
+          if [ ! -d "$API_DIR" ]; then
+            echo "No API routes directory — skipping"
+            exit 0
+          fi
+          echo "Checking API routes for validation patterns..."
+          MISSING=0
+          for route in $(find "$API_DIR" -name "route.ts"); do
+            if ! grep -q "validate\|sanitize\|safeParse\|\.parse\|z\.\|schema" "$route"; then
+              echo "::warning file=$route::No validation pattern found in $route"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+          if [ "$MISSING" -gt 0 ]; then
+            echo "::warning::$MISSING API route(s) without detected validation"
+          else
+            echo "All API routes have validation"
+          fi
+
+      # 8. Unit Tests
+      - name: Run unit tests
+        run: npm test
+
+      # 9. E2E Tests (optional)
+      - name: Install Playwright browsers
+        if: ${{ inputs.run-e2e }}
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        if: ${{ inputs.run-e2e }}
+        run: ${{ inputs.e2e-command }}
+
+  # SAST - Semgrep
+  semgrep:
+    if: ${{ !inputs.skip-semgrep }}
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: semgrep scan --config p/nextjs --config p/typescript --config p/secrets --error
