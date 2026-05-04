@@ -39,9 +39,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
         with:
           node-version: ${{ inputs.node-version }}
           cache: 'npm'
@@ -88,12 +92,7 @@ jobs:
       # 6. Dangerous Patterns Check
       - name: Check for console.log in app code
         run: |
-          # Support both src/app (src layout) and app (root layout)
-          DIRS=""
-          for d in src/app src/components src/hooks app components hooks; do
-            [ -d "$d" ] && DIRS="$DIRS $d"
-          done
-          DIRS="${DIRS## }"
+          DIRS=$(find src -maxdepth 1 -type d \( -name app -o -name components -o -name hooks \) 2>/dev/null)
           if [ -z "$DIRS" ]; then
             echo "No app/components/hooks directories found — skipping"
             exit 0
@@ -107,18 +106,8 @@ jobs:
 
       - name: Check for dangerouslySetInnerHTML
         run: |
-          # Support both src/app and root app layout
-          DIRS=""
-          for d in src/app src/components src/hooks app components hooks; do
-            [ -d "$d" ] && DIRS="$DIRS $d"
-          done
-          DIRS="${DIRS## }"
-          if [ -z "$DIRS" ]; then
-            echo "No directories to check — skipping"
-            exit 0
-          fi
           if grep -rn "dangerouslySetInnerHTML" --include="*.ts" --include="*.tsx" \
-            --exclude-dir=node_modules --exclude-dir=.next $DIRS; then
+            --exclude-dir=node_modules --exclude-dir=.next src/; then
             echo "::error::dangerouslySetInnerHTML found"
             exit 1
           fi
@@ -128,12 +117,8 @@ jobs:
       - name: Check API routes for validation
         continue-on-error: true
         run: |
-          # Support both src/app/api and app/api layout
-          API_DIR=""
-          for d in src/app/api app/api; do
-            [ -d "$d" ] && API_DIR="$d" && break
-          done
-          if [ -z "$API_DIR" ]; then
+          API_DIR="src/app/api"
+          if [ ! -d "$API_DIR" ]; then
             echo "No API routes directory — skipping"
             exit 0
           fi
@@ -153,18 +138,7 @@ jobs:
 
       # 8. Unit Tests
       - name: Run unit tests
-        run: |
-          if npm run --silent test 2>/dev/null; then
-            echo "Unit tests passed"
-          else
-            EXIT=$?
-            if [ $EXIT -eq 1 ]; then
-              # npm exits 1 for "missing script" — treat as skipped
-              echo "No unit test script configured — skipping"
-            else
-              exit $EXIT
-            fi
-          fi
+        run: npm test
 
       # 9. E2E Tests (optional)
       - name: Install Playwright browsers
@@ -183,6 +157,8 @@ jobs:
       image: semgrep/semgrep
     steps:
       - uses: actions/checkout@v4
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
       - name: Run Semgrep
         run: semgrep scan --config p/nextjs --config p/typescript --config p/secrets --error
