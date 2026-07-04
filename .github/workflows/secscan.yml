@@ -1,0 +1,60 @@
+# =============================================================================
+# Sprach-agnostischer Security-Scan für ALLE ratwerk-Projekte
+# Lives in: ratwerk/.github/.github/workflows/secscan.yml
+#
+# Läuft unabhängig vom Stack (Next.js, Python, statisch) — kein Build, keine
+# npm/pip-Abhängigkeit. Nur:
+#   1. gitleaks   – Secret-Detection (regex + entropy, findet auch hardcodierte
+#                   Passwörter/Keys, die TruffleHog --only-verified verpasst)
+#   2. Semgrep    – SAST inkl. p/secrets (z.B. API-Key in URL, unsichere Muster)
+#
+# Aufruf pro Repo (.github/workflows/secscan.yml):
+#   name: Security Scan
+#   on:
+#     push: { branches: [main] }
+#     pull_request: { branches: [main] }
+#   jobs:
+#     scan:
+#       uses: ratwerk/.github/.github/workflows/secscan.yml@main
+# =============================================================================
+
+name: Security Scan (shared)
+
+on:
+  workflow_call:
+    inputs:
+      semgrep-configs:
+        description: 'Space-separated Semgrep rule packs'
+        default: 'p/secrets p/default'
+        type: string
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: Secret detection (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # volle History, damit auch alte Commits geprüft werden
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITLEAKS_LICENSE nur für Organisationen nötig – ratwerk ist ein User-Account
+
+  semgrep:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Semgrep
+        run: |
+          ARGS=""
+          for c in ${{ inputs.semgrep-configs }}; do ARGS="$ARGS --config $c"; done
+          semgrep scan $ARGS --error --metrics=off
