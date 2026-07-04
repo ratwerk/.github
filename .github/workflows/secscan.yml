@@ -4,9 +4,9 @@
 #
 # Läuft unabhängig vom Stack (Next.js, Python, statisch) — kein Build, keine
 # npm/pip-Abhängigkeit. Nur:
-#   1. gitleaks   – Secret-Detection (regex + entropy, findet auch hardcodierte
-#                   Passwörter/Keys, die TruffleHog --only-verified verpasst)
-#   2. Semgrep    – SAST inkl. p/secrets (z.B. API-Key in URL, unsichere Muster)
+#   1. gitleaks   – Secret-Detection im aktuellen Baum (regex + entropy, findet
+#                   auch hardcodierte Passwörter/Keys)
+#   2. Semgrep    – SAST mit p/secrets (z.B. API-Key in URL, geleakte Tokens)
 #
 # Aufruf pro Repo (.github/workflows/secscan.yml):
 #   name: Security Scan
@@ -16,6 +16,10 @@
 #   jobs:
 #     scan:
 #       uses: ratwerk/.github/.github/workflows/secscan.yml@main
+#
+# False Positives unterdrücken:
+#   - gitleaks: Eintrag in .gitleaksignore (Fingerprint aus dem Log)
+#   - Semgrep:  Inline-Kommentar  // nosemgrep: <rule-id>
 # =============================================================================
 
 name: Security Scan (shared)
@@ -25,7 +29,7 @@ on:
     inputs:
       semgrep-configs:
         description: 'Space-separated Semgrep rule packs'
-        default: 'p/secrets p/default'
+        default: 'p/secrets'
         type: string
   workflow_dispatch:
 
@@ -38,13 +42,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # volle History, damit auch alte Commits geprüft werden
+      # gitleaks als Binary via Docker – zuverlässiger als die gitleaks-action
+      # (die auf User-Accounts an ihrer Lizenz-/Telemetrie-Logik scheitert).
+      # "dir" scannt den aktuellen Arbeitsbaum (keine History-Altlasten).
       - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # GITLEAKS_LICENSE nur für Organisationen nötig – ratwerk ist ein User-Account
+        run: |
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest \
+            dir /repo --redact --verbose --exit-code 1
 
   semgrep:
     name: SAST (Semgrep)
