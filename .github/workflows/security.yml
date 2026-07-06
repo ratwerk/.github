@@ -11,7 +11,7 @@ on:
     inputs:
       node-version:
         description: 'Node.js version'
-        default: '20'
+        default: '24'
         type: string
       demo-mode:
         description: 'Set DEMO_MODE env var for build'
