@@ -24,6 +24,7 @@ jobs:
           base: ""
           head: HEAD
           extra_args: --only-verified
+          version: 3.99.2@sha256:47a84bc18a0d04a165498bbbd3bacfd84176661cbc91f8e0f85467f6a771e99a
 
       - name: Pattern check for common secret formats
         run: |

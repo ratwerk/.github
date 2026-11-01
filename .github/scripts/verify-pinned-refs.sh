@@ -21,9 +21,21 @@ fi
 
 for file in "${files[@]}"; do
   line_number=0
+  # The TruffleHog action runs the image "${image}:${version}" and defaults to
+  # "latest", so a pinned action SHA alone still runs a floating image.
+  trufflehog_line=0
   while IFS= read -r line || [ -n "$line" ]; do
     line_number=$((line_number + 1))
     code="${line%%#*}"
+
+    if [ "$trufflehog_line" -gt 0 ]; then
+      if [[ "$code" =~ ^[[:space:]]*version:[[:space:]]*[^[:space:]]+@sha256:[0-9a-f]{64}[[:space:]]*$ ]]; then
+        trufflehog_line=0
+      elif [[ "$code" =~ ^[[:space:]]*-[[:space:]] ]]; then
+        report "$file" "$trufflehog_line" "TruffleHog action without a digest-pinned version input"
+        trufflehog_line=0
+      fi
+    fi
 
     if [[ "$code" =~ uses:[[:space:]]*([^[:space:]]+) ]]; then
       ref="${BASH_REMATCH[1]}"
@@ -34,6 +46,7 @@ for file in "${files[@]}"; do
       elif ! [[ "$ref" =~ @[0-9a-f]{40}$ ]]; then
         report "$file" "$line_number" "Action not pinned to a commit SHA: $ref"
       fi
+      [[ "$ref" == trufflesecurity/trufflehog@* ]] && trufflehog_line=$line_number
     fi
 
     if [[ "$code" =~ ^[[:space:]]*image:[[:space:]]*([^[:space:]]+) ]]; then
@@ -45,6 +58,9 @@ for file in "${files[@]}"; do
       report "$file" "$line_number" "docker run without an image digest"
     fi
   done < "$file"
+  if [ "$trufflehog_line" -gt 0 ]; then
+    report "$file" "$trufflehog_line" "TruffleHog action without a digest-pinned version input"
+  fi
 done
 
 if [ "$violations" -gt 0 ]; then
